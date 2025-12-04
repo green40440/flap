@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Flappy Bird — Global Leaderboard</title>
+<style>
+:root {
+--bg:#87CEEB;
+--ground:#DEB887;
+--pipe:#2E8B57;
+--bird:#FFCC00;
+--text:#022;
+}
+html, body { height:100%; margin:0; font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial; background:var(--bg);}
+#gameWrap{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;gap:8px;padding:12px;box-sizing:border-box;}
+canvas{background:linear-gradient(#87CEEB 0%,#b3e1ff 60%);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,0.25);touch-action:none;}
+.hud{display:flex;gap:12px;align-items:center;color:var(--text);}
+.button{background:#fff;border-radius:8px;padding:8px 12px;box-shadow:0 3px 8px rgba(0,0,0,0.12);border:1px solid rgba(0,0,0,0.06);cursor:pointer;}
+.centerOverlay{position:absolute;left:50%;transform:translateX(-50%);text-align:center;pointer-events:none;}
+.menu{pointer-events:auto;padding:16px;background:rgba(255,255,255,0.95);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,0.15);}
+h1{margin:0 0 8px 0;font-size:20px;}
+small{color:#333;}
+.footer{font-size:12px;color:#033;opacity:0.75;}
+.modal{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:white;padding:16px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,0.25);z-index:9999;max-width:92vw;width:420px;}
+.modal h2{margin:0 0 8px 0;}
+.modal .close{float:right;cursor:pointer;}
+.leaderboard-row{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #eee;}
+#leaderboardList{max-height:320px;overflow:auto;margin-top:8px;}
+@media (max-width:480px){.hud{flex-direction:column;gap:6px;}.modal{width:92vw;}}
+</style>
+</head>
+<body>
+<div id="gameWrap">
+<div class="hud">
+<div><strong>Score:</strong> <span id="score">0</span></div>
+<div><strong>Best:</strong> <span id="best">0</span></div>
+<div class="button" id="muteBtn">🔊</div>
+<div class="button" id="pauseBtn">⏸️</div>
+<div class="button" id="resetBtn">Restart</div>
+<div class="button" id="leaderboardBtn">Leaderboard</div>
+</div>
+
+<div style="position:relative;width:min(820px,98vw);">
+<canvas id="game"></canvas>
+<div class="centerOverlay" id="overlay" style="top:30%;">
+<div class="menu" id="menu">
+<h1>Flappy — Tap / Click / Space</h1>
+<div><small>Press Space or tap/click to flap. Avoid pipes and the ground.</small></div>
+<div style="margin-top:12px;">
+<button id="startBtn" class="button">Start Game</button>
+</div>
+<div style="margin-top:8px;" class="footer">Made with 💛 — single-file HTML</div>
+</div>
+</div>
+</div>
+</div>
+
+<div id="leaderboardModal" class="modal" style="display:none;">
+<div>
+<span class="close" id="closeLb" title="Close">✖</span>
+<h2>Global Leaderboard</h2>
+<div id="leaderboardList"><small>Loading...</small></div>
+<div style="margin-top:10px;text-align:right;">
+<button id="refreshLb" class="button">Refresh</button>
+<button id="closeBtn" class="button">Close</button>
+</div>
+</div>
+</div>
+
+<script>
+// ================= CONFIG =================
+const CONFIG = {
+canvasWidth:720,canvasHeight:540,gravity:1100,flapImpulse:-340,
+// DYNAMIC GAP CONFIGURATION
+pipeGapMax: 150, // Starting and max gap size
+pipeGapMin: 75, // Smallest gap size (half of max)
+gapScaleRate: 0.8, // How many pixels the gap shrinks per point
+minGapStreak: 3, // How many minimum-gap pipes spawn in a row
+// END DYNAMIC GAP CONFIGURATION
+pipeWidth: 64,pipeSpacing:220,pipeSpeed:200,
+spawnOffset:120,groundHeight:80,birdRadius:16,pipeMinY:80,pipeMaxYOffset:200,flapCooldownMs:80,soundVolume:0.15
+};
+const LEADERBOARD_SERVER = "https://your-flappy-leaderboard.example.com"; // replace with your hosted server
+
+// ================= CANVAS =================
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+function resizeCanvas(){
+const containerWidth = Math.min(820,window.innerWidth*0.98);
+const scale = containerWidth/CONFIG.canvasWidth;
+const logicalW = CONFIG.canvasWidth, logicalH=CONFIG.canvasHeight, dpr=window.devicePixelRatio||1;
+canvas.style.width=Math.round(logicalW*scale)+'px';
+canvas.style.height=Math.round(logicalH*scale)+'px';
+canvas.width=Math.round(logicalW*dpr*scale);
+canvas.height=Math.round(logicalH*dpr*scale);
+ctx.setTransform(dpr*scale,0,0,dpr*scale,0,0);
+}
+window.addEventListener('resize',resizeCanvas);
+resizeCanvas();
+
+// ================= GAME STATE =================
+let state='menu',score=0,best=parseInt(localStorage.getItem('flappy_best')||'0',10);
+const scoreEl=document.getElementById('score'),bestEl=document.getElementById('best');
+const overlay=document.getElementById('overlay'),menuEl=document.getElementById('menu');
+const startBtn=document.getElementById('startBtn'),muteBtn=document.getElementById('muteBtn'),pauseBtn=document.getElementById('pauseBtn'),resetBtn=document.getElementById('resetBtn');
+const leaderboardBtn=document.getElementById('leaderboardBtn');
+const leaderboardModal=document.getElementById('leaderboardModal');
+const leaderboardList=document.getElementById('leaderboardList');
+const refreshLbBtn=document.getElementById('refreshLb'),closeLb=document.getElementById('closeLb'),closeBtn=document.getElementById('closeBtn');
+
+bestEl.textContent=best;
+
+const bird={x:CONFIG.canvasWidth*0.28,y:CONFIG.canvasHeight/2,vy:0,radius:CONFIG.birdRadius,rotation:0};
+let pipes=[],lastSpawnX=0,lastTime=null,flapCooldown=0,audioCtx=null;
+// DYNAMIC GAP STATE
+let currentPipeGap = CONFIG.pipeGapMax;
+let minGapCounter = 0;
+
+// ================= AUDIO =================
+let muted=false;
+function ensureAudio(){if(!audioCtx)audioCtx=new (window.AudioContext||window.webkitAudioContext)();}
+function playBeep(f=440,d=0.06,t='sine'){if(muted)return;ensureAudio();const o=audioCtx.createOscillator(),g=audioCtx.createGain();o.type=t;o.frequency.value=f;g.gain.value=CONFIG.soundVolume;o.connect(g);g.connect(audioCtx.destination);const now=audioCtx.currentTime;o.start(now);g.gain.setValueAtTime(CONFIG.soundVolume,now);g.gain.exponentialRampToValueAtTime(0.0001,now+d);o.
